@@ -27,7 +27,7 @@ TOOLS = {
     "tools": [
         {
             "name": "buscar_productos",
-            "description": "Busca productos en Odoo por nombre, SKU o categoría. También permite filtrar por stock mínimo.",
+            "description": "Busca productos en Odoo por nombre, SKU, categoría o stock mínimo.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -47,6 +47,46 @@ TOOLS = {
                 "properties": {
                     "sku": {"type": "string", "description": "SKU exacto del producto (ej: EMB-007)."}
                 }
+            }
+        },
+        {
+            "name": "productos_agotados",
+            "description": "Lista todos los productos que están agotados (stock = 0).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limite": {"type": "integer", "description": "Número máximo de productos a devolver.", "default": 50}
+                }
+            }
+        },
+        {
+            "name": "productos_stock_bajo",
+            "description": "Lista todos los productos con stock bajo (entre 1 y 10 unidades).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limite": {"type": "integer", "description": "Número máximo de productos a devolver.", "default": 50}
+                }
+            }
+        },
+        {
+            "name": "buscar_por_precio",
+            "description": "Busca productos filtrando por precio máximo.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "precio_maximo": {"type": "number", "description": "Precio máximo en euros (ej: 5.00)."},
+                    "categoria": {"type": "string", "description": "Opcional: filtrar también por categoría."},
+                    "limite": {"type": "integer", "description": "Número máximo de productos a devolver.", "default": 20}
+                }
+            }
+        },
+        {
+            "name": "resumen_inventario",
+            "description": "Muestra un resumen general del inventario: total de productos, stock total y valor total.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
             }
         }
     ]
@@ -115,7 +155,7 @@ async def messages(request: Request):
         params = body.get("params", {})
         tool_name = params.get("name", "")
         arguments = params.get("arguments", {})
-        fields = ["name", "default_code", "qty_available", "categ_id"]
+        fields = ["name", "default_code", "qty_available", "categ_id", "list_price"]
         
         if tool_name == "buscar_productos":
             keyword = arguments.get("keyword", "")
@@ -125,17 +165,10 @@ async def messages(request: Request):
             limite = arguments.get("limite", 20)
             
             domain = []
-            if keyword:
-                domain.append(("name", "ilike", keyword))
-            if sku:
-                domain.append(("default_code", "ilike", sku))
-            if categoria:
-                domain.append(("categ_id.name", "ilike", categoria))
-            if stock_minimo is not None:
-                domain.append(("qty_available", ">=", stock_minimo))
-            
-            if not domain:
-                domain = []  # Sin filtro = todos los productos
+            if keyword: domain.append(("name", "ilike", keyword))
+            if sku: domain.append(("default_code", "ilike", sku))
+            if categoria: domain.append(("categ_id.name", "ilike", categoria))
+            if stock_minimo is not None: domain.append(("qty_available", ">=", stock_minimo))
             
             results = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
                 "product.product", "search_read", [domain],
@@ -147,9 +180,55 @@ async def messages(request: Request):
             results = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
                 "product.product", "search_read", [domain],
                 {"fields": fields, "limit": 1})
-            
             if not results:
                 results = {"error": f"No se encontró ningún producto con SKU: {sku}"}
+        
+        elif tool_name == "productos_agotados":
+            limite = arguments.get("limite", 50)
+            domain = [("qty_available", "=", 0)]
+            results = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
+                "product.product", "search_read", [domain],
+                {"fields": fields, "limit": limite})
+        
+        elif tool_name == "productos_stock_bajo":
+            limite = arguments.get("limite", 50)
+            domain = [("qty_available", ">", 0), ("qty_available", "<=", 10)]
+            results = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
+                "product.product", "search_read", [domain],
+                {"fields": fields, "limit": limite})
+        
+        elif tool_name == "buscar_por_precio":
+            precio_maximo = arguments.get("precio_maximo", 0)
+            categoria = arguments.get("categoria", "")
+            limite = arguments.get("limite", 20)
+            
+            domain = [("list_price", "<=", precio_maximo)]
+            if categoria: domain.append(("categ_id.name", "ilike", categoria))
+            
+            results = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
+                "product.product", "search_read", [domain],
+                {"fields": fields, "limit": limite})
+        
+        elif tool_name == "resumen_inventario":
+            # Obtener todos los productos
+            all_products = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
+                "product.product", "search_read", [[]],
+                {"fields": ["qty_available", "list_price"]})
+            
+            total_productos = len(all_products)
+            total_stock = sum(p["qty_available"] for p in all_products)
+            valor_total = sum(p["qty_available"] * p["list_price"] for p in all_products)
+            agotados = sum(1 for p in all_products if p["qty_available"] == 0)
+            stock_bajo = sum(1 for p in all_products if 0 < p["qty_available"] <= 10)
+            
+            results = {
+                "total_productos": total_productos,
+                "total_stock": total_stock,
+                "valor_total_inventario": round(valor_total, 2),
+                "productos_agotados": agotados,
+                "productos_stock_bajo": stock_bajo,
+                "productos_disponibles": total_productos - agotados
+            }
         
         else:
             results = {"error": f"Herramienta no encontrada: {tool_name}"}
@@ -175,4 +254,4 @@ async def messages(request: Request):
 
 @app.get("/")
 def root():
-    return {"status": "ok", "tools": TOOLS}
+    return {"status": "ok", "total_tools": len(TOOLS["tools"])}
