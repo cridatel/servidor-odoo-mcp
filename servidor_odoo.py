@@ -40,4 +40,4 @@ def buscar_productos_odoo(keyword: str = "", limite: int = 5) -> str:
     return json.dumps(results, indent=2, ensure_ascii=False)
 
 # 4. EJECUTAR SERVIDOR
-mcp.run(transport="streamable-http", host="0.0.0.0", port=8000)
+mcp.run(transport="streamable-http")
