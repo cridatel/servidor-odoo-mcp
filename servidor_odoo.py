@@ -279,10 +279,19 @@ async def messages(request: Request):
         elif tool_name == "top_productos":
             tipo = arguments.get("tipo", "mayor")
             limite = arguments.get("limite", 5)
-            order = "qty_available DESC" if tipo == "mayor" else "qty_available ASC"
-            results = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
+            
+            # Obtener todos los productos (sin order, ya que qty_available no es almacenado)
+            all_products = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
                 "product.product", "search_read", [[]],
-                {"fields": fields, "limit": limite, "order": order})
+                {"fields": fields})
+            
+            # Ordenar manualmente en Python
+            if tipo == "mayor":
+                all_products.sort(key=lambda p: p["qty_available"], reverse=True)
+            else:
+                all_products.sort(key=lambda p: p["qty_available"])
+            
+            results = all_products[:limite]
         
         elif tool_name == "valor_por_categoria":
             all_products = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
@@ -350,7 +359,7 @@ async def messages(request: Request):
                 "default_code": sku,
                 "list_price": precio,
                 "qty_available": stock_inicial,
-                "type": "product",
+                "type": "consu",
             }
             if cat_id:
                 vals["categ_id"] = cat_id
