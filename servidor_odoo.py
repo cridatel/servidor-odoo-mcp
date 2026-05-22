@@ -24,17 +24,32 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 # 3. HERRAMIENTAS DISPONIBLES
 TOOLS = {
-    "tools": [{
-        "name": "buscar_productos_odoo",
-        "description": "Busca productos en Odoo por nombre y devuelve nombre, SKU y stock disponible.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "keyword": {"type": "string", "description": "Palabra clave para filtrar productos."},
-                "limite": {"type": "integer", "description": "Número máximo de productos a devolver.", "default": 5}
+    "tools": [
+        {
+            "name": "buscar_productos",
+            "description": "Busca productos en Odoo por nombre, SKU o categoría. También permite filtrar por stock mínimo.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "keyword": {"type": "string", "description": "Palabra clave para buscar por nombre del producto."},
+                    "sku": {"type": "string", "description": "SKU o referencia interna del producto (ej: EMB-007)."},
+                    "categoria": {"type": "string", "description": "Nombre de la categoría (ej: Embalaje, Protección)."},
+                    "stock_minimo": {"type": "integer", "description": "Filtrar productos con stock mayor o igual a este valor."},
+                    "limite": {"type": "integer", "description": "Número máximo de productos a devolver.", "default": 20}
+                }
+            }
+        },
+        {
+            "name": "consultar_stock",
+            "description": "Consulta el stock detallado de un producto específico por su SKU exacto.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "sku": {"type": "string", "description": "SKU exacto del producto (ej: EMB-007)."}
+                }
             }
         }
-    }]
+    ]
 }
 
 # 4. COLA DE MENSAJES POR SESIÓN
@@ -49,9 +64,7 @@ async def sse(request: Request):
     
     async def generator():
         try:
-            # Enviar endpoint del mensaje
             yield f"event: endpoint\ndata: /messages?session_id={session_id}\n\n"
-            
             while True:
                 try:
                     message = await asyncio.wait_for(queue.get(), timeout=15)
@@ -78,7 +91,6 @@ async def messages(request: Request):
     method = body.get("method", "")
     msg_id = body.get("id", None)
     
-    # Ignorar notificaciones
     if msg_id is None:
         print("=== NOTIFICACION (ignorada) ===")
         return {}
@@ -101,14 +113,46 @@ async def messages(request: Request):
     
     elif method == "tools/call":
         params = body.get("params", {})
-        keyword = params.get("arguments", {}).get("keyword", "")
-        limite = params.get("arguments", {}).get("limite", 5)
+        tool_name = params.get("name", "")
+        arguments = params.get("arguments", {})
+        fields = ["name", "default_code", "qty_available", "categ_id"]
         
-        domain = [("name", "ilike", keyword)] if keyword else []
-        fields = ["name", "default_code", "qty_available"]
-        results = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
-            "product.product", "search_read", [domain],
-            {"fields": fields, "limit": limite})
+        if tool_name == "buscar_productos":
+            keyword = arguments.get("keyword", "")
+            sku = arguments.get("sku", "")
+            categoria = arguments.get("categoria", "")
+            stock_minimo = arguments.get("stock_minimo", None)
+            limite = arguments.get("limite", 20)
+            
+            domain = []
+            if keyword:
+                domain.append(("name", "ilike", keyword))
+            if sku:
+                domain.append(("default_code", "ilike", sku))
+            if categoria:
+                domain.append(("categ_id.name", "ilike", categoria))
+            if stock_minimo is not None:
+                domain.append(("qty_available", ">=", stock_minimo))
+            
+            if not domain:
+                domain = []  # Sin filtro = todos los productos
+            
+            results = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
+                "product.product", "search_read", [domain],
+                {"fields": fields, "limit": limite})
+        
+        elif tool_name == "consultar_stock":
+            sku = arguments.get("sku", "")
+            domain = [("default_code", "=", sku)]
+            results = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
+                "product.product", "search_read", [domain],
+                {"fields": fields, "limit": 1})
+            
+            if not results:
+                results = {"error": f"No se encontró ningún producto con SKU: {sku}"}
+        
+        else:
+            results = {"error": f"Herramienta no encontrada: {tool_name}"}
         
         respuesta = {
             "jsonrpc": "2.0",
@@ -121,7 +165,6 @@ async def messages(request: Request):
     else:
         respuesta = {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": "Method not found"}}
     
-    # Enviar respuesta a través de la cola SSE
     respuesta_str = json.dumps(respuesta)
     if session_id in sessions:
         await sessions[session_id].put(respuesta_str)
