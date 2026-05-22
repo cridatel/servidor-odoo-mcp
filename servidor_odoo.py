@@ -1,7 +1,9 @@
 import os
 import json
 import xmlrpc.client
-import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from mcp.server.fastmcp import FastMCP
 
 # 1. CONFIGURACIÓN DE ODOO
 ODOO_URL = os.environ["ODOO_URL"]
@@ -14,8 +16,6 @@ uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASSWORD, {})
 models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 
 # 2. CREAR SERVIDOR MCP
-from mcp.server.fastmcp import FastMCP
-
 mcp = FastMCP(
     name="Odoo Inventory Server",
     instructions="Servidor MCP para consultar el inventario de Odoo en tiempo real."
@@ -24,12 +24,7 @@ mcp = FastMCP(
 # 3. HERRAMIENTA DE BÚSQUEDA
 @mcp.tool()
 def buscar_productos_odoo(keyword: str = "", limite: int = 5) -> str:
-    """Busca productos en Odoo por nombre y devuelve nombre, SKU y stock disponible.
-    
-    Args:
-        keyword: Palabra clave para filtrar productos.
-        limite: Número máximo de productos a devolver.
-    """
+    """Busca productos en Odoo por nombre y devuelve nombre, SKU y stock disponible."""
     domain = [("name", "ilike", keyword)] if keyword else []
     fields = ["name", "default_code", "qty_available"]
     results = models.execute_kw(
@@ -40,7 +35,14 @@ def buscar_productos_odoo(keyword: str = "", limite: int = 5) -> str:
     )
     return json.dumps(results, indent=2, ensure_ascii=False)
 
-# 4. OBTENER LA APP SSE Y EJECUTAR CON UVICORN
-app = mcp.sse_app()
-port = int(os.environ.get("PORT", 10000))
-uvicorn.run(app, host="0.0.0.0", port=port)
+# 4. CREAR APP FASTAPI Y MONTAR MCP
+app = FastAPI(title="Odoo MCP Server")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# Montar la app MCP en la ruta /mcp
+mcp_app = mcp.sse_app()
+app.mount("/mcp", mcp_app)
+
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "Odoo MCP Server running"}
