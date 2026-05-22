@@ -57,7 +57,12 @@ async def messages(request: Request):
     print(json.dumps(body, indent=2))
     
     method = body.get("method", "")
-    msg_id = body.get("id", 0)
+    msg_id = body.get("id", None)
+    
+    # Ignorar notificaciones (no tienen id)
+    if msg_id is None:
+        print("=== NOTIFICACION (ignorada) ===")
+        return {}
     
     if method == "initialize":
         respuesta = {
@@ -80,7 +85,7 @@ async def messages(request: Request):
     
     if method == "tools/list":
         respuesta = {"jsonrpc": "2.0", "id": msg_id, "result": TOOLS}
-        print("=== RESPUESTA ===")
+        print("=== RESPUESTA TOOLS ===")
         print(json.dumps(respuesta, indent=2))
         return respuesta
     
@@ -102,7 +107,7 @@ async def messages(request: Request):
                 "content": [{"type": "text", "text": json.dumps(results, indent=2, ensure_ascii=False)}]
             }
         }
-        print("=== RESPUESTA ===")
+        print("=== RESPUESTA CALL ===")
         print(json.dumps(respuesta, indent=2))
         return respuesta
     
