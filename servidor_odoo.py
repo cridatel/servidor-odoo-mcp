@@ -280,12 +280,10 @@ async def messages(request: Request):
             tipo = arguments.get("tipo", "mayor")
             limite = arguments.get("limite", 5)
             
-            # Obtener todos los productos (sin order, ya que qty_available no es almacenado)
             all_products = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
                 "product.product", "search_read", [[]],
                 {"fields": fields})
             
-            # Ordenar manualmente en Python
             if tipo == "mayor":
                 all_products.sort(key=lambda p: p["qty_available"], reverse=True)
             else:
@@ -315,7 +313,6 @@ async def messages(request: Request):
             cantidad = arguments.get("cantidad", 0)
             motivo = arguments.get("motivo", "Ajuste manual")
             
-            # Buscar producto
             domain = [("default_code", "=", sku)]
             product = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
                 "product.product", "search_read", [domain],
@@ -331,7 +328,6 @@ async def messages(request: Request):
                 if nuevo_stock < 0:
                     results = {"error": f"Stock insuficiente. Stock actual: {stock_anterior}, intentas quitar: {abs(cantidad)}"}
                 else:
-                    # Actualizar stock
                     models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
                         "product.product", "write", [[product_id], {"qty_available": nuevo_stock}])
                     
@@ -367,7 +363,6 @@ async def messages(request: Request):
             new_id = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
                 "product.product", "create", [vals])
             
-            # Si hay stock inicial, actualizarlo después de crear
             if stock_inicial > 0:
                 models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
                     "product.product", "write", [[new_id], {"qty_available": stock_inicial}])
