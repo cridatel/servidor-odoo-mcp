@@ -59,6 +59,25 @@ async def messages(request: Request):
     method = body.get("method", "")
     msg_id = body.get("id", 0)
     
+    if method == "initialize":
+        respuesta = {
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                    "tools": {}
+                },
+                "serverInfo": {
+                    "name": "Odoo Inventory Server",
+                    "version": "1.0.0"
+                }
+            }
+        }
+        print("=== RESPUESTA INIT ===")
+        print(json.dumps(respuesta, indent=2))
+        return respuesta
+    
     if method == "tools/list":
         respuesta = {"jsonrpc": "2.0", "id": msg_id, "result": TOOLS}
         print("=== RESPUESTA ===")
