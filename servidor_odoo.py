@@ -41,9 +41,7 @@ TOOLS = {
 async def sse():
     async def generator():
         session_id = str(uuid.uuid4())
-        # Enviar endpoint del mensaje
         yield f"event: endpoint\ndata: /messages?session_id={session_id}\n\n"
-        # Mantener viva la conexión
         while True:
             await asyncio.sleep(15)
             yield ": keepalive\n\n"
@@ -55,14 +53,18 @@ async def sse():
 @app.post("/messages")
 async def messages(request: Request):
     body = await request.json()
+    print("=== MEETIP360 ENVIA ===")
+    print(json.dumps(body, indent=2))
+    
     method = body.get("method", "")
     msg_id = body.get("id", 0)
     
-    # Responder con lista de herramientas
     if method == "tools/list":
-        return {"jsonrpc": "2.0", "id": msg_id, "result": TOOLS}
+        respuesta = {"jsonrpc": "2.0", "id": msg_id, "result": TOOLS}
+        print("=== RESPUESTA ===")
+        print(json.dumps(respuesta, indent=2))
+        return respuesta
     
-    # Ejecutar herramienta
     elif method == "tools/call":
         params = body.get("params", {})
         keyword = params.get("arguments", {}).get("keyword", "")
@@ -74,15 +76,21 @@ async def messages(request: Request):
             "product.product", "search_read", [domain],
             {"fields": fields, "limit": limite})
         
-        return {
+        respuesta = {
             "jsonrpc": "2.0",
             "id": msg_id,
             "result": {
                 "content": [{"type": "text", "text": json.dumps(results, indent=2, ensure_ascii=False)}]
             }
         }
+        print("=== RESPUESTA ===")
+        print(json.dumps(respuesta, indent=2))
+        return respuesta
     
-    return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": "Method not found"}}
+    respuesta = {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": "Method not found"}}
+    print("=== RESPUESTA ERROR ===")
+    print(json.dumps(respuesta, indent=2))
+    return respuesta
 
 @app.get("/")
 def root():
