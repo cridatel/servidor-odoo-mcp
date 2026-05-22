@@ -1,6 +1,7 @@
 import os
 import json
 import xmlrpc.client
+import uvicorn
 
 # 1. CONFIGURACIÓN DE ODOO
 ODOO_URL = os.environ["ODOO_URL"]
@@ -39,6 +40,7 @@ def buscar_productos_odoo(keyword: str = "", limite: int = 5) -> str:
     )
     return json.dumps(results, indent=2, ensure_ascii=False)
 
-# 4. EJECUTAR SERVIDOR
+# 4. OBTENER LA APP SSE Y EJECUTAR CON UVICORN
+app = mcp.sse_app()
 port = int(os.environ.get("PORT", 10000))
-mcp.run(transport="streamable-http", host="0.0.0.0", port=port)
+uvicorn.run(app, host="0.0.0.0", port=port)
