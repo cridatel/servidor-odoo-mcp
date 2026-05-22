@@ -358,7 +358,6 @@ async def messages(request: Request):
                 "name": nombre,
                 "default_code": sku,
                 "list_price": precio,
-                "qty_available": stock_inicial,
                 "type": "consu",
             }
             if cat_id:
@@ -366,6 +365,11 @@ async def messages(request: Request):
             
             new_id = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
                 "product.product", "create", [vals])
+            
+            # Si hay stock inicial, actualizarlo después de crear
+            if stock_inicial > 0:
+                models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
+                    "product.product", "write", [[new_id], {"qty_available": stock_inicial}])
             
             results = {
                 "success": True,
