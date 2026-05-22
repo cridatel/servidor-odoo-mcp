@@ -359,6 +359,7 @@ async def messages(request: Request):
                 "default_code": sku,
                 "list_price": precio,
                 "type": "consu",
+                "detailed_type": "product",
             }
             if cat_id:
                 vals["categ_id"] = cat_id
