@@ -1,9 +1,12 @@
 import os
 import json
 import xmlrpc.client
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from mcp.server.fastmcp import FastMCP
+from mcp.server.sse import SseServerTransport
+import asyncio
 
 # 1. CONFIGURACIÓN DE ODOO
 ODOO_URL = os.environ["ODOO_URL"]
@@ -35,14 +38,30 @@ def buscar_productos_odoo(keyword: str = "", limite: int = 5) -> str:
     )
     return json.dumps(results, indent=2, ensure_ascii=False)
 
-# 4. CREAR APP FASTAPI Y MONTAR MCP
+# 4. CREAR APP FASTAPI CON ENDPOINTS SSE MANUALES
 app = FastAPI(title="Odoo MCP Server")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# Montar la app MCP en la ruta /mcp
-mcp_app = mcp.sse_app()
-app.mount("/mcp", mcp_app)
+sse_transport = SseServerTransport("/messages")
 
 @app.get("/")
 def root():
     return {"status": "ok", "message": "Odoo MCP Server running"}
+
+@app.get("/sse")
+async def sse_endpoint():
+    """Endpoint SSE que MeetIP360 necesita."""
+    async def event_generator():
+        async with sse_transport.connect_sse() as streams:
+            await mcp._mcp_server.run(streams[0], streams[1], mcp._mcp_server.create_initialization_options())
+            async for event in streams[0]:
+                yield f"data: {event.model_dump_json()}\n\n"
+    
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.post("/messages")
+async def messages_endpoint(request: Request):
+    """Endpoint para recibir mensajes del cliente."""
+    body = await request.body()
+    await sse_transport.handle_message(body)
+    return {"status": "ok"}
