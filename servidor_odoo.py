@@ -6,6 +6,7 @@ import uuid
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from typing import Dict, Any
 
 # 1. CONFIGURACIÓN DE ODOO
 ODOO_URL = os.environ["ODOO_URL"]
@@ -36,33 +37,53 @@ TOOLS = {
     }]
 }
 
-# 4. ENDPOINT SSE
+# 4. COLA DE MENSAJES POR SESIÓN
+sessions: Dict[str, asyncio.Queue] = {}
+
+# 5. ENDPOINT SSE
 @app.get("/sse")
-async def sse():
+async def sse(request: Request):
+    session_id = request.query_params.get("session_id", str(uuid.uuid4()))
+    queue: asyncio.Queue = asyncio.Queue()
+    sessions[session_id] = queue
+    
     async def generator():
-        session_id = str(uuid.uuid4())
-        yield f"event: endpoint\ndata: /messages?session_id={session_id}\n\n"
-        while True:
-            await asyncio.sleep(15)
-            yield ": keepalive\n\n"
+        try:
+            # Enviar endpoint del mensaje
+            yield f"event: endpoint\ndata: /messages?session_id={session_id}\n\n"
+            
+            while True:
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield f"event: message\ndata: {message}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            sessions.pop(session_id, None)
     
     return StreamingResponse(generator(), media_type="text/event-stream",
                            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-# 5. ENDPOINT MENSAJES
+# 6. ENDPOINT MENSAJES
 @app.post("/messages")
 async def messages(request: Request):
     body = await request.json()
+    session_id = request.query_params.get("session_id", "")
+    
     print("=== MEETIP360 ENVIA ===")
     print(json.dumps(body, indent=2))
     
     method = body.get("method", "")
     msg_id = body.get("id", None)
     
-    # Ignorar notificaciones (no tienen id)
+    # Ignorar notificaciones
     if msg_id is None:
         print("=== NOTIFICACION (ignorada) ===")
         return {}
+    
+    respuesta = None
     
     if method == "initialize":
         respuesta = {
@@ -70,24 +91,13 @@ async def messages(request: Request):
             "id": msg_id,
             "result": {
                 "protocolVersion": "2025-06-18",
-                "capabilities": {
-                    "tools": {}
-                },
-                "serverInfo": {
-                    "name": "Odoo Inventory Server",
-                    "version": "1.0.0"
-                }
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "Odoo Inventory Server", "version": "1.0.0"}
             }
         }
-        print("=== RESPUESTA INIT ===")
-        print(json.dumps(respuesta, indent=2))
-        return respuesta
     
-    if method == "tools/list":
+    elif method == "tools/list":
         respuesta = {"jsonrpc": "2.0", "id": msg_id, "result": TOOLS}
-        print("=== RESPUESTA TOOLS ===")
-        print(json.dumps(respuesta, indent=2))
-        return respuesta
     
     elif method == "tools/call":
         params = body.get("params", {})
@@ -107,14 +117,18 @@ async def messages(request: Request):
                 "content": [{"type": "text", "text": json.dumps(results, indent=2, ensure_ascii=False)}]
             }
         }
-        print("=== RESPUESTA CALL ===")
-        print(json.dumps(respuesta, indent=2))
-        return respuesta
     
-    respuesta = {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": "Method not found"}}
-    print("=== RESPUESTA ERROR ===")
-    print(json.dumps(respuesta, indent=2))
-    return respuesta
+    else:
+        respuesta = {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": "Method not found"}}
+    
+    # Enviar respuesta a través de la cola SSE
+    respuesta_str = json.dumps(respuesta)
+    if session_id in sessions:
+        await sessions[session_id].put(respuesta_str)
+    
+    print("=== RESPUESTA ===")
+    print(respuesta_str)
+    return {"status": "ok"}
 
 @app.get("/")
 def root():
