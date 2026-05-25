@@ -23,7 +23,7 @@ models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# 3. HERRAMIENTAS DISPONIBLES (SOLO CONSULTA)
+# 3. HERRAMIENTAS DISPONIBLES
 TOOLS = {
     "tools": [
         {
@@ -102,6 +102,20 @@ TOOLS = {
             "name": "valor_por_categoria",
             "description": "Muestra el valor del inventario desglosado por categoría.",
             "inputSchema": {"type": "object", "properties": {}}
+        },
+        {
+            "name": "crear_reserva",
+            "description": "Crea una reserva/pedido de venta en Odoo para un cliente. Si el cliente no existe, lo crea automáticamente.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "sku": {"type": "string", "description": "SKU del producto a reservar."},
+                    "cantidad": {"type": "integer", "description": "Cantidad a reservar."},
+                    "nombre_cliente": {"type": "string", "description": "Nombre completo o empresa del cliente."},
+                    "telefono_cliente": {"type": "string", "description": "Teléfono del cliente (opcional)."},
+                    "email_cliente": {"type": "string", "description": "Email del cliente (opcional)."}
+                }
+            }
         }
     ]
 }
@@ -133,7 +147,38 @@ async def sse(request: Request):
     return StreamingResponse(generator(), media_type="text/event-stream",
                            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-# 6. ENDPOINT MENSAJES
+# 6. BUSCAR O CREAR CLIENTE EN ODOO
+def buscar_o_crear_cliente(nombre, telefono="", email=""):
+    """Busca un cliente por nombre o teléfono. Si no existe, lo crea."""
+    
+    # Buscar por teléfono primero (más preciso)
+    if telefono:
+        domain = [("phone", "=", telefono)]
+        cliente = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
+            "res.partner", "search_read", [domain],
+            {"fields": ["id", "name"], "limit": 1})
+        if cliente:
+            return cliente[0]["id"]
+    
+    # Buscar por nombre
+    if nombre:
+        domain = [("name", "ilike", nombre)]
+        cliente = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
+            "res.partner", "search_read", [domain],
+            {"fields": ["id", "name"], "limit": 1})
+        if cliente:
+            return cliente[0]["id"]
+    
+    # Si no existe, crear cliente nuevo
+    vals = {"name": nombre}
+    if telefono: vals["phone"] = telefono
+    if email: vals["email"] = email
+    
+    new_id = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
+        "res.partner", "create", [vals])
+    return new_id
+
+# 7. ENDPOINT MENSAJES
 @app.post("/messages")
 async def messages(request: Request):
     body = await request.json()
@@ -273,6 +318,53 @@ async def messages(request: Request):
                 categorias[cat_name]["valor"] += p["qty_available"] * p["list_price"]
             
             results = [{"categoria": k, **v, "valor": round(v["valor"], 2)} for k, v in categorias.items()]
+        
+        # ---- HERRAMIENTA DE RESERVA ----
+        elif tool_name == "crear_reserva":
+            sku = arguments.get("sku", "")
+            cantidad = arguments.get("cantidad", 0)
+            nombre_cliente = arguments.get("nombre_cliente", "")
+            telefono_cliente = arguments.get("telefono_cliente", "")
+            email_cliente = arguments.get("email_cliente", "")
+            
+            # 1. Buscar producto
+            domain = [("default_code", "=", sku)]
+            product = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
+                "product.product", "search_read", [domain],
+                {"fields": ["id", "name", "qty_available", "list_price"], "limit": 1})
+            
+            if not product:
+                results = {"error": f"No se encontró el SKU: {sku}"}
+            elif product[0]["qty_available"] < cantidad:
+                results = {"error": f"Stock insuficiente. Disponible: {product[0]['qty_available']}, Solicitado: {cantidad}"}
+            else:
+                # 2. Buscar o crear cliente
+                cliente_id = buscar_o_crear_cliente(nombre_cliente, telefono_cliente, email_cliente)
+                
+                # 3. Crear pedido de venta
+                pedido_vals = {
+                    "partner_id": cliente_id,
+                    "order_line": [(0, 0, {
+                        "product_id": product[0]["id"],
+                        "product_uom_qty": cantidad,
+                        "price_unit": product[0]["list_price"],
+                    })]
+                }
+                
+                pedido_id = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
+                    "sale.order", "create", [pedido_vals])
+                
+                results = {
+                    "success": True,
+                    "pedido_id": pedido_id,
+                    "cliente": nombre_cliente,
+                    "producto": product[0]["name"],
+                    "sku": sku,
+                    "cantidad": cantidad,
+                    "precio_unitario": product[0]["list_price"],
+                    "total": round(cantidad * product[0]["list_price"], 2),
+                    "estado": "Presupuesto creado. Pendiente de confirmar."
+                }
         
         else:
             results = {"error": f"Herramienta no encontrada: {tool_name}"}
