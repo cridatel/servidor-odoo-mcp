@@ -105,7 +105,7 @@ TOOLS = {
         },
         {
             "name": "crear_reserva",
-            "description": "Crea una reserva/pedido de venta en Odoo para un cliente. Si el cliente no existe, lo crea automáticamente.",
+            "description": "Crea una reserva de stock en Odoo para un cliente. Si el cliente no existe, lo crea automáticamente.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -151,7 +151,6 @@ async def sse(request: Request):
 def buscar_o_crear_cliente(nombre, telefono="", email=""):
     """Busca un cliente por nombre o teléfono. Si no existe, lo crea."""
     
-    # Buscar por teléfono primero (más preciso)
     if telefono:
         domain = [("phone", "=", telefono)]
         cliente = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
@@ -160,7 +159,6 @@ def buscar_o_crear_cliente(nombre, telefono="", email=""):
         if cliente:
             return cliente[0]["id"]
     
-    # Buscar por nombre
     if nombre:
         domain = [("name", "ilike", nombre)]
         cliente = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
@@ -169,7 +167,6 @@ def buscar_o_crear_cliente(nombre, telefono="", email=""):
         if cliente:
             return cliente[0]["id"]
     
-    # Si no existe, crear cliente nuevo
     vals = {"name": nombre}
     if telefono: vals["phone"] = telefono
     if email: vals["email"] = email
@@ -341,29 +338,38 @@ async def messages(request: Request):
                 # 2. Buscar o crear cliente
                 cliente_id = buscar_o_crear_cliente(nombre_cliente, telefono_cliente, email_cliente)
                 
-                # 3. Crear pedido de venta
-                pedido_vals = {
+                # 3. Crear albarán de entrega (reserva de stock)
+                picking_vals = {
                     "partner_id": cliente_id,
-                    "order_line": [(0, 0, {
+                    "picking_type_id": 1,
+                    "location_id": 8,
+                    "location_dest_id": 5,
+                    "move_ids": [(0, 0, {
                         "product_id": product[0]["id"],
                         "product_uom_qty": cantidad,
-                        "price_unit": product[0]["list_price"],
+                        "name": product[0]["name"],
+                        "location_id": 8,
+                        "location_dest_id": 5,
                     })]
                 }
                 
-                pedido_id = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
-                    "sale.order", "create", [pedido_vals])
+                picking_id = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
+                    "stock.picking", "create", [picking_vals])
+                
+                # Confirmar el albarán
+                models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
+                    "stock.picking", "action_confirm", [[picking_id]])
                 
                 results = {
                     "success": True,
-                    "pedido_id": pedido_id,
+                    "albaran_id": picking_id,
                     "cliente": nombre_cliente,
                     "producto": product[0]["name"],
                     "sku": sku,
                     "cantidad": cantidad,
                     "precio_unitario": product[0]["list_price"],
                     "total": round(cantidad * product[0]["list_price"], 2),
-                    "estado": "Presupuesto creado. Pendiente de confirmar."
+                    "estado": "Reserva creada. Stock separado para el cliente."
                 }
         
         else:
