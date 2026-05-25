@@ -23,7 +23,7 @@ models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# 3. HERRAMIENTAS DISPONIBLES
+# 3. HERRAMIENTAS DISPONIBLES (SOLO CONSULTA)
 TOOLS = {
     "tools": [
         {
@@ -88,32 +88,6 @@ TOOLS = {
             "inputSchema": {"type": "object", "properties": {}}
         },
         {
-            "name": "actualizar_stock",
-            "description": "Actualiza el stock de un producto (entrada o salida).",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "sku": {"type": "string", "description": "SKU del producto a modificar."},
-                    "cantidad": {"type": "integer", "description": "Cantidad a añadir (positivo) o quitar (negativo)."},
-                    "motivo": {"type": "string", "description": "Motivo del cambio (ej: recepción, venta, ajuste)."}
-                }
-            }
-        },
-        {
-            "name": "crear_producto",
-            "description": "Crea un nuevo producto en el inventario.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "nombre": {"type": "string", "description": "Nombre del producto."},
-                    "sku": {"type": "string", "description": "SKU o referencia interna."},
-                    "categoria": {"type": "string", "description": "Nombre de la categoría."},
-                    "precio": {"type": "number", "description": "Precio de venta en euros."},
-                    "stock_inicial": {"type": "integer", "description": "Stock inicial.", "default": 0}
-                }
-            }
-        },
-        {
             "name": "top_productos",
             "description": "Muestra los productos con más o menos stock.",
             "inputSchema": {
@@ -159,14 +133,7 @@ async def sse(request: Request):
     return StreamingResponse(generator(), media_type="text/event-stream",
                            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-# 6. OBTENER ID DE CATEGORÍA POR NOMBRE
-def get_category_id(name):
-    results = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
-        "product.category", "search_read", [[("name", "ilike", name)]],
-        {"fields": ["id"], "limit": 1})
-    return results[0]["id"] if results else None
-
-# 7. ENDPOINT MENSAJES
+# 6. ENDPOINT MENSAJES
 @app.post("/messages")
 async def messages(request: Request):
     body = await request.json()
@@ -306,76 +273,6 @@ async def messages(request: Request):
                 categorias[cat_name]["valor"] += p["qty_available"] * p["list_price"]
             
             results = [{"categoria": k, **v, "valor": round(v["valor"], 2)} for k, v in categorias.items()]
-        
-        # ---- HERRAMIENTAS DE MODIFICACIÓN ----
-        elif tool_name == "actualizar_stock":
-            sku = arguments.get("sku", "")
-            cantidad = arguments.get("cantidad", 0)
-            motivo = arguments.get("motivo", "Ajuste manual")
-            
-            domain = [("default_code", "=", sku)]
-            product = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
-                "product.product", "search_read", [domain],
-                {"fields": ["id", "name", "qty_available"], "limit": 1})
-            
-            if not product:
-                results = {"error": f"No se encontró el SKU: {sku}"}
-            else:
-                product_id = product[0]["id"]
-                stock_anterior = product[0]["qty_available"]
-                nuevo_stock = stock_anterior + cantidad
-                
-                if nuevo_stock < 0:
-                    results = {"error": f"Stock insuficiente. Stock actual: {stock_anterior}, intentas quitar: {abs(cantidad)}"}
-                else:
-                    models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
-                        "product.product", "write", [[product_id], {"qty_available": nuevo_stock}])
-                    
-                    results = {
-                        "success": True,
-                        "sku": sku,
-                        "producto": product[0]["name"],
-                        "stock_anterior": stock_anterior,
-                        "cambio": cantidad,
-                        "stock_nuevo": nuevo_stock,
-                        "motivo": motivo
-                    }
-        
-        elif tool_name == "crear_producto":
-            nombre = arguments.get("nombre", "")
-            sku = arguments.get("sku", "")
-            categoria = arguments.get("categoria", "")
-            precio = arguments.get("precio", 0)
-            stock_inicial = arguments.get("stock_inicial", 0)
-            
-            cat_id = get_category_id(categoria) if categoria else None
-            
-            vals = {
-                "name": nombre,
-                "default_code": sku,
-                "list_price": precio,
-                "type": "consu",
-                "detailed_type": "product",
-            }
-            if cat_id:
-                vals["categ_id"] = cat_id
-            
-            new_id = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
-                "product.product", "create", [vals])
-            
-            if stock_inicial > 0:
-                models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
-                    "product.product", "write", [[new_id], {"qty_available": stock_inicial}])
-            
-            results = {
-                "success": True,
-                "id": new_id,
-                "nombre": nombre,
-                "sku": sku,
-                "precio": precio,
-                "stock_inicial": stock_inicial,
-                "categoria": categoria or "Sin categoría"
-            }
         
         else:
             results = {"error": f"Herramienta no encontrada: {tool_name}"}
