@@ -347,7 +347,6 @@ async def messages(request: Request):
                     "move_ids": [(0, 0, {
                         "product_id": product[0]["id"],
                         "product_uom_qty": cantidad,
-                        "name": product[0]["name"],
                         "location_id": 8,
                         "location_dest_id": 5,
                     })]
