@@ -116,11 +116,6 @@ TOOLS = {
                     "email_cliente": {"type": "string", "description": "Email del cliente (opcional)."}
                 }
             }
-        },
-        {
-            "name": "diagnostico_picking",
-            "description": "Diagnóstico: muestra los tipos de operación disponibles en Odoo.",
-            "inputSchema": {"type": "object", "properties": {}}
         }
     ]
 }
@@ -343,13 +338,13 @@ async def messages(request: Request):
                 # 2. Buscar o crear cliente
                 cliente_id = buscar_o_crear_cliente(nombre_cliente, telefono_cliente, email_cliente)
                 
-                # 3. Crear albarán de entrega
+                # 3. Crear albarán de entrega (ID 2 = Órdenes de entrega)
                 picking_id = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
                     "stock.picking", "create", [{
                         "partner_id": cliente_id,
-                        "picking_type_id": 1,
-                        "location_id": 8,
-                        "location_dest_id": 5,
+                        "picking_type_id": 2,
+                        "location_id": 5,
+                        "location_dest_id": 8,
                     }])
                 
                 # 4. Crear movimiento de stock vinculado al albarán
@@ -360,8 +355,8 @@ async def messages(request: Request):
                         "product_uom_id": 1,
                         "name": product[0]["name"],
                         "picking_id": picking_id,
-                        "location_id": 8,
-                        "location_dest_id": 5,
+                        "location_id": 5,
+                        "location_dest_id": 8,
                     }])
                 
                 # 5. Confirmar el albarán
@@ -379,13 +374,6 @@ async def messages(request: Request):
                     "total": round(cantidad * product[0]["list_price"], 2),
                     "estado": "Reserva creada. Stock separado para el cliente."
                 }
-        
-        # ---- HERRAMIENTA DE DIAGNÓSTICO ----
-        elif tool_name == "diagnostico_picking":
-            picking_types = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
-                "stock.picking.type", "search_read", [[]],
-                {"fields": ["id", "name", "code"]})
-            results = picking_types
         
         else:
             results = {"error": f"Herramienta no encontrada: {tool_name}"}
