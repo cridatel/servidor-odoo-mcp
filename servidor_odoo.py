@@ -116,6 +116,11 @@ TOOLS = {
                     "email_cliente": {"type": "string", "description": "Email del cliente (opcional)."}
                 }
             }
+        },
+        {
+            "name": "diagnostico_picking",
+            "description": "Diagnóstico: muestra los tipos de operación disponibles en Odoo.",
+            "inputSchema": {"type": "object", "properties": {}}
         }
     ]
 }
@@ -374,6 +379,13 @@ async def messages(request: Request):
                     "total": round(cantidad * product[0]["list_price"], 2),
                     "estado": "Reserva creada. Stock separado para el cliente."
                 }
+        
+        # ---- HERRAMIENTA DE DIAGNÓSTICO ----
+        elif tool_name == "diagnostico_picking":
+            picking_types = models.execute_kw(ODOO_DB, uid, ODOO_PASSWORD,
+                "stock.picking.type", "search_read", [[]],
+                {"fields": ["id", "name", "code"]})
+            results = picking_types
         
         else:
             results = {"error": f"Herramienta no encontrada: {tool_name}"}
