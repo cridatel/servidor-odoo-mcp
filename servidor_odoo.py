@@ -352,7 +352,7 @@ async def messages(request: Request):
                     "stock.move", "create", [{
                         "product_id": product[0]["id"],
                         "product_uom_qty": cantidad,
-                        "product_uom": 1,
+                        "product_uom_id": 1,
                         "name": product[0]["name"],
                         "picking_id": picking_id,
                         "location_id": 8,
